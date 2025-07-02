@@ -231,28 +231,30 @@ public class AsyncTcpServer : MonoBehaviour
 
     public void DisconnectClient(string clientId)
     {
-        if (_clients.TryRemove(clientId, out var tcpClient))
+        try
         {
+            if (!_clients.TryRemove(clientId, out var tcpClient))
+            {
+                throw new Exception();
+            }
+
             // NOTE:
             // client.RemoteEndPoint becomes unavailable after client.Close() is called.
             var ipEndPoint = tcpClient.Client.RemoteEndPoint as IPEndPoint;
 
-            try
-            {
-                tcpClient?.Close();
+            tcpClient?.Close();
 
-                Debug.Log($"Client disconnected: {ipEndPoint?.Address} ({clientId})");
+            Debug.Log($"Client disconnected: {ipEndPoint?.Address} ({clientId})");
 
-                _mainThreadActions.Enqueue(() => clientDisconnected
-                    .Invoke(clientId, tcpClient?.Client.RemoteEndPoint as IPEndPoint));
-            }
-            catch (Exception exception)
-            {
-                Debug.LogError($"Error disconnecting client: {ipEndPoint?.Address} ({clientId}) {exception.Message}");
+            _mainThreadActions.Enqueue(() => clientDisconnected
+                .Invoke(clientId, tcpClient?.Client.RemoteEndPoint as IPEndPoint));
+        }
+        catch (Exception exception)
+        {
+            Debug.LogError($"Error disconnecting client: {clientId} {exception.Message}");
 
-                _mainThreadActions.Enqueue(() => clientDisconnectFailed
-                    .Invoke(clientId, tcpClient?.Client.RemoteEndPoint as IPEndPoint, exception));
-            }
+            _mainThreadActions.Enqueue(() => clientDisconnectFailed
+                .Invoke(clientId, tcpClient?.Client.RemoteEndPoint as IPEndPoint, exception));
         }
     }
 
