@@ -25,7 +25,6 @@ public class AsyncTcpClient : MonoBehaviour
     public UnityEvent<Exception> messageReceiveFailed;
     public UnityEvent<Exception> messageSendFailed;
 
-    private TcpClient               _tcpClient;
     private NetworkStream           _stream;
     private CancellationTokenSource _cancellationTokenSource;
 
@@ -35,7 +34,9 @@ public class AsyncTcpClient : MonoBehaviour
 
     #region Property
 
-    public bool IsConnected => _tcpClient?.Connected ?? false;
+    public TcpClient TcpClient { get; private set; }
+
+    public bool IsConnected => TcpClient?.Connected ?? false;
 
     #endregion
 
@@ -68,15 +69,15 @@ public class AsyncTcpClient : MonoBehaviour
         {
             if (IsConnected)
             {
-                throw new Exception("Already connected to server");
+                throw new Exception($"Already connected to server {serverHost}:{serverPort}");
             }
 
             _cancellationTokenSource = new CancellationTokenSource();
-            _tcpClient               = new TcpClient();
+            TcpClient               = new TcpClient();
 
-            await _tcpClient.ConnectAsync(serverHost, serverPort);
+            await TcpClient.ConnectAsync(serverHost, serverPort);
 
-            _stream = _tcpClient.GetStream();
+            _stream = TcpClient.GetStream();
 
             Debug.Log($"Connected to server {serverHost}:{serverPort}");
 
@@ -86,7 +87,7 @@ public class AsyncTcpClient : MonoBehaviour
         }
         catch (Exception exception)
         {
-            Debug.LogError($"Failed to connect: {exception.Message}");
+            Debug.LogError($"Failed to connect: {serverHost}:{serverPort}\n{exception.Message}");
 
             _mainThreadActions.Enqueue(() => connectFailed.Invoke(exception));
 
@@ -104,21 +105,21 @@ public class AsyncTcpClient : MonoBehaviour
         {
             if (!IsConnected)
             {
-                throw new Exception("Not connected to server");
+                throw new Exception($"Not connected to server {serverHost}:{serverPort}");;
             }
 
             _cancellationTokenSource?.Cancel();
             _stream?                 .Close();
-            _tcpClient?              .Close();
+            TcpClient?              .Close();
         }
         catch (Exception exception)
         {
-            Debug.LogError($"Error during disconnect: {exception.Message}");
+            Debug.LogError($"Error during disconnect: {serverHost}:{serverPort}\n{exception.Message}");
         }
         finally
         {
             _stream    = null;
-            _tcpClient = null;
+            TcpClient = null;
 
             Debug.Log($"Disconnected from server {serverHost}:{serverPort}");
 
@@ -141,7 +142,7 @@ public class AsyncTcpClient : MonoBehaviour
                     break; // Server has closed the connection
                 }
 
-                Debug.Log("Message received from server");
+                Debug.Log($"Message received from server {serverHost}:{serverPort}");
 
                 _mainThreadActions.Enqueue(() => messageReceived.Invoke(bytesRead, buffer));
             }
@@ -150,7 +151,7 @@ public class AsyncTcpClient : MonoBehaviour
         {
             if (!cancellationToken.IsCancellationRequested)
             {
-                Debug.LogError($"Failed to receive message: {exception.Message}");
+                Debug.LogError($"Failed to receive message: {serverHost}:{serverPort}\n{exception.Message}");
 
                 _mainThreadActions.Enqueue(() => messageReceiveFailed.Invoke(exception));
             }
@@ -170,12 +171,12 @@ public class AsyncTcpClient : MonoBehaviour
         {
             if (!IsConnected)
             {
-                throw new Exception("Not connected to server");
+                throw new Exception($"Not connected to server {serverHost}:{serverPort}");
             }
 
             await _stream.WriteAsync(message, 0, message.Length);
 
-            Debug.Log("Message sent to server");
+            Debug.Log($"Message sent to server {serverHost}:{serverPort}");
 
             _mainThreadActions.Enqueue(() => messageSent.Invoke(message));
 
@@ -183,7 +184,7 @@ public class AsyncTcpClient : MonoBehaviour
         }
         catch (Exception exception)
         {
-            Debug.LogError($"Failed to send message: {exception.Message}");
+            Debug.LogError($"Failed to send message: {serverHost}:{serverPort}\n{exception.Message}");
 
             _mainThreadActions.Enqueue(() => messageSendFailed.Invoke(exception));
 
