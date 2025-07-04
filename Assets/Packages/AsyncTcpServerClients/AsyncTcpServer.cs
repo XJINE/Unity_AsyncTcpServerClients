@@ -19,24 +19,24 @@ public class AsyncTcpServer : MonoBehaviour
     [SerializeField] private bool autoStart   = true;
     [SerializeField] private bool logClientId = false;
 
-    public UnityEvent                                serverStarted;
-    public UnityEvent                                serverStopped;
-    public UnityEvent<string, EndPoint>              clientConnected;    // ClientId, ClientEndPoint
-    public UnityEvent<string, EndPoint>              clientDisconnected; // ClientId, ClientEndPoint
-    public UnityEvent<string, EndPoint, int, byte[]> messageReceived;    // ClientId, ClientEndPoint, dataLength, data
-    public UnityEvent<string, EndPoint, byte[]>      messageSent;        // ClientId, ClientEndPoint, data
+    public UnityEvent                                 serverStarted;
+    public UnityEvent                                 serverStopped;
+    public UnityEvent<string, TcpClient>              clientConnected;    // ClientId, Client
+    public UnityEvent<string, TcpClient>              clientDisconnected; // ClientId, Client
+    public UnityEvent<string, TcpClient, int, byte[]> messageReceived;    // ClientId, Client, dataLength, data
+    public UnityEvent<string, TcpClient, byte[]>      messageSent;        // ClientId, Client, data
 
-    public UnityEvent<Exception>                   serverStartFailed;
-    public UnityEvent<Exception>                   serverStopFailed;
-    public UnityEvent<Exception>                   clientConnectFailed;
-    public UnityEvent<string, EndPoint, Exception> clientDisconnectFailed; // ClientId, ClientEndPoint, Exception
-    public UnityEvent<string, EndPoint, Exception> messageReceiveFailed;   // ClientId, ClientEndPoint, Exception
-    public UnityEvent<string, EndPoint, Exception> messageSendFailed;      // ClientId, ClientEndPoint, Exception
+    public UnityEvent<Exception>                    serverStartFailed;
+    public UnityEvent<Exception>                    serverStopFailed;
+    public UnityEvent<Exception>                    clientConnectFailed;
+    public UnityEvent<string, TcpClient, Exception> clientDisconnectFailed; // ClientId, Client, Exception
+    public UnityEvent<string, TcpClient, Exception> messageReceiveFailed;   // ClientId, Client, Exception
+    public UnityEvent<string, TcpClient, Exception> messageSendFailed;      // ClientId, Client, Exception
 
     private TcpListener             _tcpListener;
     private CancellationTokenSource _cancellationTokenSource;
 
-    private readonly ConcurrentDictionary<string, TcpClient> _clients           = new (); // ClientId, ClientEndPoint
+    private readonly ConcurrentDictionary<string, TcpClient> _clients           = new (); // ClientId, Client
     private readonly ConcurrentQueue<Action>                 _mainThreadActions = new ();
 
     #endregion Field
@@ -78,6 +78,7 @@ public class AsyncTcpServer : MonoBehaviour
         StopServer();
     }
 
+    [ContextMenu(nameof(StartServer))]
     public async void StartServer()
     {
         try
@@ -106,6 +107,7 @@ public class AsyncTcpServer : MonoBehaviour
         }
     }
 
+    [ContextMenu(nameof(StopServer))]
     public void StopServer()
     {
         try
@@ -118,10 +120,7 @@ public class AsyncTcpServer : MonoBehaviour
             _cancellationTokenSource?.Cancel();
             _tcpListener?.Stop();
 
-            foreach (var clientId in _clients.Keys)
-            {
-                DisconnectClient(clientId);
-            }
+            DisconnectClients();
 
             _clients.Clear();
 
@@ -153,7 +152,7 @@ public class AsyncTcpServer : MonoBehaviour
 
                     Debug.Log($"Client connected: {tcpClient.Client.RemoteEndPoint}{LogClientId(clientId)}");
 
-                    _mainThreadActions.Enqueue(() => clientConnected.Invoke(clientId, tcpClient.Client.RemoteEndPoint));
+                    _mainThreadActions.Enqueue(() => clientConnected.Invoke(clientId, tcpClient));
 
                     _ = ReceiveMessage(clientId, tcpClient, cancellationToken);
                 }
@@ -189,6 +188,71 @@ public class AsyncTcpServer : MonoBehaviour
         }
     }
 
+    [ContextMenu(nameof(DisconnectClients))]
+    public void DisconnectClients()
+    {
+        foreach (var clientId in _clients.Keys)
+        {
+            DisconnectClient(clientId);
+        }
+    }
+
+    public void DisconnectClient(string clientId)
+    {
+        DisconnectClient(clientId, null);
+    }
+
+    private void DisconnectClient(string clientId, EndPoint endPoint = null)
+    {
+        if (!_clients.TryRemove(clientId, out var tcpClient))
+        {
+            // CAUTION:
+            // It’s common that the client is already removed because of the shutdown order.
+            // But trying to remove it anyway is the right way to close the connection.
+            // So it shouldn't be treated as an exception or an error.
+
+            var clientLog = endPoint == null ? $"{clientId}" : $"{endPoint}{LogClientId(clientId)}";
+
+            Debug.Log($"Client not found or already disconnected: {clientLog}");
+
+            return;
+        }
+
+        try
+        {
+            // CAUTION:
+            // var remoteEndPoint = tcpClient.Client.RemoteEndPoint;
+            // 1) Client.RemoteEndPoint becomes unavailable after client.Close() is called.
+            // 2) When the connection is closed from the client side,
+            //    "tcpClient.Client.RemoteEndPoint" throws "Cannot access a disposed object.".
+            //    In most cases, in such situations, the finally block of ReceiveMessage is called.
+            //    So the RemoteEndPoint is available from there.
+
+            var remoteEndPoint = endPoint;
+
+            if (tcpClient.Connected)
+            {
+                remoteEndPoint = tcpClient.Client.RemoteEndPoint;
+            }
+
+            tcpClient.Close();
+
+            Debug.Log($"Client disconnected: {remoteEndPoint}{LogClientId(clientId)}");
+
+            _mainThreadActions.Enqueue(() => clientDisconnected.Invoke(clientId, tcpClient));
+        }
+        catch (Exception exception)
+        {
+            var clientLog = _clients.TryGetValue(clientId, out var client) ?
+                          $"{client.Client.RemoteEndPoint}{LogClientId(clientId)}" :
+                          $"{clientId}";
+
+            Debug.LogError($"Error disconnecting client: {clientLog}\n{exception.Message}");
+
+            _mainThreadActions.Enqueue(() => clientDisconnectFailed.Invoke(clientId, client, exception));
+        }
+    }
+
     private async Task ReceiveMessage(string clientId, TcpClient client, CancellationToken cancellationToken)
     {
         var buffer = new byte[bufferSize];
@@ -210,7 +274,7 @@ public class AsyncTcpServer : MonoBehaviour
 
                 Debug.Log($"Message received from client: {remoteEndPoint}{LogClientId(clientId)}");
 
-                _mainThreadActions.Enqueue(() => messageReceived.Invoke(clientId, remoteEndPoint, bytesRead, buffer));
+                _mainThreadActions.Enqueue(() => messageReceived.Invoke(clientId, client, bytesRead, buffer));
             }
         }
         catch (Exception exception)
@@ -219,43 +283,12 @@ public class AsyncTcpServer : MonoBehaviour
             {
                 Debug.LogError($"Message receiving error: {remoteEndPoint}{LogClientId(clientId)}\n{exception.Message}");
 
-                _mainThreadActions.Enqueue(() => messageReceiveFailed.Invoke(clientId, remoteEndPoint, exception));
+                _mainThreadActions.Enqueue(() => messageReceiveFailed.Invoke(clientId, client, exception));
             }
         }
         finally
         {
-            DisconnectClient(clientId);
-        }
-    }
-
-    public void DisconnectClient(string clientId)
-    {
-        try
-        {
-            if (!_clients.TryRemove(clientId, out var tcpClient))
-            {
-                throw new Exception($"Client not found or already disconnected: {clientId}");
-            }
-
-            // NOTE:
-            // client.RemoteEndPoint becomes unavailable after client.Close() is called.
-            var endPoint = tcpClient.Client.RemoteEndPoint;
-
-            tcpClient.Close();
-
-            Debug.Log($"Client disconnected: {endPoint}{LogClientId(clientId)}");
-
-            _mainThreadActions.Enqueue(() => clientDisconnected.Invoke(clientId, endPoint));
-        }
-        catch (Exception exception)
-        {
-            var clientLog = _clients.TryGetValue(clientId, out var client) ?
-                          $"{client.Client.RemoteEndPoint}{LogClientId(clientId)}" :
-                          $"{clientId}";
-
-            Debug.LogError($"Error disconnecting client: {clientLog}\n{exception.Message}");
-
-            _mainThreadActions.Enqueue(() => clientDisconnectFailed.Invoke(clientId, client?.Client.RemoteEndPoint, exception));
+            DisconnectClient(clientId, remoteEndPoint);
         }
     }
 
@@ -277,7 +310,7 @@ public class AsyncTcpServer : MonoBehaviour
 
             Debug.Log($"Message sent to client: {tcpClient.Client.RemoteEndPoint}{LogClientId(clientId)}");
 
-            _mainThreadActions.Enqueue(()=> messageSent.Invoke(clientId, tcpClient.Client.RemoteEndPoint, message));
+            _mainThreadActions.Enqueue(()=> messageSent.Invoke(clientId, tcpClient, message));
 
             return true;
         }
@@ -289,7 +322,7 @@ public class AsyncTcpServer : MonoBehaviour
 
             Debug.LogError($"Failed to send message: {clientLog}\n{exception.Message}");
 
-            _mainThreadActions.Enqueue(() => messageSendFailed.Invoke(clientId, client?.Client.RemoteEndPoint, exception));
+            _mainThreadActions.Enqueue(() => messageSendFailed.Invoke(clientId, client, exception));
 
             return false;
         }

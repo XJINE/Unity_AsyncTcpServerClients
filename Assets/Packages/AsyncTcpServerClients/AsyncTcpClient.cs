@@ -63,6 +63,7 @@ public class AsyncTcpClient : MonoBehaviour
         Disconnect();
     }
 
+    [ContextMenu(nameof(Connect))]
     public async void Connect()
     {
         try
@@ -73,7 +74,7 @@ public class AsyncTcpClient : MonoBehaviour
             }
 
             _cancellationTokenSource = new CancellationTokenSource();
-            TcpClient               = new TcpClient();
+            TcpClient                = new TcpClient();
 
             await TcpClient.ConnectAsync(serverHost, serverPort);
 
@@ -101,16 +102,25 @@ public class AsyncTcpClient : MonoBehaviour
     [ContextMenu(nameof(Disconnect))]
     public void Disconnect()
     {
+        if (!IsConnected)
+        {
+            // CAUTION:
+            // Disconnect() is called when this instance is destroyed,
+            // even if it’s not connected to the server.
+            // Therefore, "IsConnected" returning false is the expected behavior.
+
+            Debug.Log($"Not connected to server {serverHost}:{serverPort}");
+
+            // CAUTION:
+            // However, it is necessary to check that some resources have been cleared.
+            // So do not return here.
+            // return;
+        }
         try
         {
-            if (!IsConnected)
-            {
-                throw new Exception($"Not connected to server {serverHost}:{serverPort}");;
-            }
-
             _cancellationTokenSource?.Cancel();
             _stream?                 .Close();
-            TcpClient?              .Close();
+            TcpClient?               .Close();
         }
         catch (Exception exception)
         {
@@ -118,7 +128,7 @@ public class AsyncTcpClient : MonoBehaviour
         }
         finally
         {
-            _stream    = null;
+            _stream   = null;
             TcpClient = null;
 
             Debug.Log($"Disconnected from server {serverHost}:{serverPort}");

@@ -182,7 +182,7 @@ MonoBehaviour:
   messageSent:
     m_PersistentCalls:
       m_Calls: []
-  connectionFailed:
+  connectFailed:
     m_PersistentCalls:
       m_Calls: []
   messageReceiveFailed:
@@ -424,6 +424,7 @@ MonoBehaviour:
   port: 8080
   bufferSize: 4096
   autoStart: 1
+  logClientId: 0
   serverStarted:
     m_PersistentCalls:
       m_Calls: []
@@ -442,22 +443,22 @@ MonoBehaviour:
   messageSent:
     m_PersistentCalls:
       m_Calls: []
-  startServerFailed:
+  serverStartFailed:
     m_PersistentCalls:
       m_Calls: []
-  stopServerFailed:
+  serverStopFailed:
     m_PersistentCalls:
       m_Calls: []
-  connectClientFailed:
+  clientConnectFailed:
     m_PersistentCalls:
       m_Calls: []
-  disconnectClientFailed:
+  clientDisconnectFailed:
     m_PersistentCalls:
       m_Calls: []
-  receiveMessageFailed:
+  messageReceiveFailed:
     m_PersistentCalls:
       m_Calls: []
-  sendMessageFailed:
+  messageSendFailed:
     m_PersistentCalls:
       m_Calls: []
 --- !u!1660057539 &9223372036854775807
