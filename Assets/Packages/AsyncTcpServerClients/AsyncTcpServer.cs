@@ -36,8 +36,8 @@ public class AsyncTcpServer : MonoBehaviour
     private TcpListener             _tcpListener;
     private CancellationTokenSource _cancellationTokenSource;
 
-    private readonly ConcurrentDictionary<string, TcpClient> _clients           = new (); // ClientId, Client
-    private readonly ConcurrentQueue<Action>                 _mainThreadActions = new ();
+    private readonly ConcurrentDictionary<string, (TcpClient tcpClient, CancellationTokenSource cts)> _clients = new (); // ClientId, (Client, CTS)
+    private readonly ConcurrentQueue<Action> _mainThreadActions = new ();
 
     #endregion Field
 
@@ -46,7 +46,7 @@ public class AsyncTcpServer : MonoBehaviour
     public bool IsRunning => _tcpListener != null
                           && _cancellationTokenSource?.Token.IsCancellationRequested == false;
 
-    public ReadOnlyDictionary<string, TcpClient> Clients { get; private set; }
+    public ReadOnlyDictionary<string, (TcpClient tcpClient, CancellationTokenSource cts)> Clients { get; private set; }
 
     #endregion Property
 
@@ -54,7 +54,7 @@ public class AsyncTcpServer : MonoBehaviour
 
     private void Awake()
     {
-        Clients = new ReadOnlyDictionary<string, TcpClient>(_clients);
+        Clients = new ReadOnlyDictionary<string, (TcpClient tcpClient, CancellationTokenSource cts)>(_clients);
     }
 
     private void Start()
@@ -110,13 +110,22 @@ public class AsyncTcpServer : MonoBehaviour
     [ContextMenu(nameof(StopServer))]
     public void StopServer()
     {
+        if (!IsRunning)
+        {
+            // CAUTION:
+            // StopServer() is called when this instance is destroyed,
+            // even if it’s not started.
+            // Therefore, "IsRunning" returning false is the expected behavior.
+
+            Debug.Log("Server is not running");
+
+            // CAUTION:
+            // However, it is necessary to check that some resources have been cleared.
+            // So do not return here.
+            // return;
+        }
         try
         {
-            if (!IsRunning)
-            {
-                throw new Exception($"Server is not running");
-            }
-
             _cancellationTokenSource?.Cancel();
             _tcpListener?.Stop();
 
@@ -146,15 +155,16 @@ public class AsyncTcpServer : MonoBehaviour
 
                 if (tcpClient != null)
                 {
-                    var clientId = Guid.NewGuid().ToString();
+                    var clientId  = Guid.NewGuid().ToString();
+                    var clientCts = new CancellationTokenSource();
 
-                    _clients.TryAdd(clientId, tcpClient);
+                    _clients.TryAdd(clientId, (tcpClient, clientCts));
 
                     Debug.Log($"Client connected: {tcpClient.Client.RemoteEndPoint}{LogClientId(clientId)}");
 
                     _mainThreadActions.Enqueue(() => clientConnected.Invoke(clientId, tcpClient));
 
-                    _ = ReceiveMessage(clientId, tcpClient, cancellationToken);
+                    _ = ReceiveMessage(clientId, tcpClient, clientCts.Token);
                 }
             }
             catch (ObjectDisposedException) // Expected exception during server shutdown
@@ -204,7 +214,7 @@ public class AsyncTcpServer : MonoBehaviour
 
     private void DisconnectClient(string clientId, EndPoint endPoint = null)
     {
-        if (!_clients.TryRemove(clientId, out var tcpClient))
+        if (!_clients.TryRemove(clientId, out var client))
         {
             // CAUTION:
             // It’s common that the client is already removed because of the shutdown order.
@@ -230,26 +240,25 @@ public class AsyncTcpServer : MonoBehaviour
 
             var remoteEndPoint = endPoint;
 
-            if (tcpClient.Connected)
+            if (client.tcpClient.Connected)
             {
-                remoteEndPoint = tcpClient.Client.RemoteEndPoint;
+                remoteEndPoint = client.tcpClient.Client.RemoteEndPoint;
             }
 
-            tcpClient.Close();
+            client.cts?.Cancel();
+            client.tcpClient.Close();
 
             Debug.Log($"Client disconnected: {remoteEndPoint}{LogClientId(clientId)}");
 
-            _mainThreadActions.Enqueue(() => clientDisconnected.Invoke(clientId, tcpClient));
+            _mainThreadActions.Enqueue(() => clientDisconnected.Invoke(clientId, client.tcpClient));
         }
         catch (Exception exception)
         {
-            var clientLog = _clients.TryGetValue(clientId, out var client) ?
-                          $"{client.Client.RemoteEndPoint}{LogClientId(clientId)}" :
-                          $"{clientId}";
+            var clientLog = $"{client.tcpClient.Client.RemoteEndPoint}{LogClientId(clientId)}";
 
             Debug.LogError($"Error disconnecting client: {clientLog}\n{exception.Message}");
 
-            _mainThreadActions.Enqueue(() => clientDisconnectFailed.Invoke(clientId, client, exception));
+            _mainThreadActions.Enqueue(() => clientDisconnectFailed.Invoke(clientId, client.tcpClient, exception));
         }
     }
 
@@ -296,10 +305,12 @@ public class AsyncTcpServer : MonoBehaviour
     {
         try
         {
-            if (!_clients.TryGetValue(clientId, out var tcpClient))
+            if (!_clients.TryGetValue(clientId, out var client))
             {
                 throw new Exception($"Client does not exist: {clientId}");
             }
+
+            var tcpClient = client.tcpClient;
 
             if (!tcpClient.Connected)
             {
@@ -310,19 +321,19 @@ public class AsyncTcpServer : MonoBehaviour
 
             Debug.Log($"Message sent to client: {tcpClient.Client.RemoteEndPoint}{LogClientId(clientId)}");
 
-            _mainThreadActions.Enqueue(()=> messageSent.Invoke(clientId, tcpClient, message));
+            _mainThreadActions.Enqueue(()=> messageSent.Invoke(clientId, client.tcpClient, message));
 
             return true;
         }
         catch (Exception exception)
         {
             var clientLog = _clients.TryGetValue(clientId, out var client) ?
-                          $"{client.Client.RemoteEndPoint}{LogClientId(clientId)}" :
+                          $"{client.tcpClient.Client.RemoteEndPoint}{LogClientId(clientId)}" :
                           $"{clientId}";
 
             Debug.LogError($"Failed to send message: {clientLog}\n{exception.Message}");
 
-            _mainThreadActions.Enqueue(() => messageSendFailed.Invoke(clientId, client, exception));
+            _mainThreadActions.Enqueue(() => messageSendFailed.Invoke(clientId, client.tcpClient, exception));
 
             return false;
         }
