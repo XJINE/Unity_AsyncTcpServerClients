@@ -183,6 +183,14 @@ public class AsyncTcpClient : MonoBehaviour
                 Disconnect();
             }
 
+            // CAUTION:
+            // autoReconnect should be checked here, not inside Disconnect().
+            // Even if it is invoked directly, Disconnect() is called from here again.
+            // This also applies when OnDestroy() is called.
+            // 
+            // Moreover, if "reconnect" is triggered inside Disconnect(),
+            // Disconnect() will be called from here again.
+            // ReceiveMessage.finally is always called at the end of the chain.
             if (autoReconnect && !Disabling)
             {
                 Connect();
