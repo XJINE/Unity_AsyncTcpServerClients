@@ -170,6 +170,7 @@ MonoBehaviour:
   serverPort: 8080
   bufferSize: 4096
   autoConnect: 1
+  autoReconnect: 0
   connected:
     m_PersistentCalls:
       m_Calls: []
@@ -400,6 +401,7 @@ MonoBehaviour:
   serverPort: 8080
   bufferSize: 4096
   autoConnect: 1
+  autoReconnect: 1
   connected:
     m_PersistentCalls:
       m_Calls: []

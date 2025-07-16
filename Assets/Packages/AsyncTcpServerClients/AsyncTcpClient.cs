@@ -11,10 +11,11 @@ public class AsyncTcpClient : MonoBehaviour
 {
     #region Field
 
-    [SerializeField] private string serverHost  = "127.0.0.1";
-    [SerializeField] private int    serverPort  = 8080;
-    [SerializeField] private int    bufferSize  = 4 * 1024; // 4 KB
-    [SerializeField] private bool   autoConnect = false;
+    [SerializeField] private string serverHost    = "127.0.0.1";
+    [SerializeField] private int    serverPort    = 8080;
+    [SerializeField] private int    bufferSize    = 4 * 1024; // 4 KB
+    [SerializeField] private bool   autoConnect   = false;
+    [SerializeField] private bool   autoReconnect = false;
 
     public UnityEvent              connected;
     public UnityEvent              disconnected;
@@ -38,6 +39,8 @@ public class AsyncTcpClient : MonoBehaviour
 
     public bool IsConnected => TcpClient?.Connected ?? false;
 
+    private bool Disabling { get; set; }
+
     #endregion
 
     #region Method
@@ -58,8 +61,14 @@ public class AsyncTcpClient : MonoBehaviour
         }
     }
 
-    private void OnDestroy()
+    private void OnEnable()
     {
+        Disabling = false;
+    }
+
+    private void OnDisable()
+    {
+        Disabling = true;
         Disconnect();
     }
 
@@ -84,7 +93,7 @@ public class AsyncTcpClient : MonoBehaviour
 
             _mainThreadActions.Enqueue(() => connected.Invoke());
 
-            _ = ReceiveMessage(_cancellationTokenSource.Token);
+            _ = ReceiveMessage(_cancellationTokenSource.Token); // _ = means discard.
         }
         catch (Exception exception)
         {
@@ -104,17 +113,18 @@ public class AsyncTcpClient : MonoBehaviour
     {
         if (!IsConnected)
         {
+            if (Disabling)
+            {
+                return;
+            }
+
             // CAUTION:
             // Disconnect() is called when this instance is destroyed,
             // even if it’s not connected to the server.
             // Therefore, "IsConnected" returning false is the expected behavior.
 
             Debug.Log($"Not connected to server {serverHost}:{serverPort}");
-
-            // CAUTION:
-            // However, it is necessary to check that some resources have been cleared.
-            // So do not return here.
-            // return;
+            return;
         }
         try
         {
@@ -171,6 +181,11 @@ public class AsyncTcpClient : MonoBehaviour
             if (IsConnected)
             {
                 Disconnect();
+            }
+
+            if (autoReconnect && !Disabling)
+            {
+                Connect();
             }
         }
     }
